@@ -258,7 +258,6 @@ def zone_embed(player, zone_data: dict, world_override: str | None = None, zone_
             value="  ".join(f"{b['emoji']} {b['name']}" for b in buildings[:5]),
             inline=False,
         )
-    # ── Phase 3: respawn countdown + mini-boss indicator ───────────────────
     if zone_status:
         from game.respawn import format_respawn_time
         if zone_status.get("enemy_cleared") and zone_status.get("enemy_respawn_secs", 0) > 0:
@@ -342,7 +341,7 @@ def walk_embed(player, zone_data: dict, walk_result: dict) -> discord.Embed:
 
     embed.description = f"*{event_prefix}{atmosphere}*"
 
-    hp_display = hp_bar(prog.current_hp, max_hp)
+    hp_display  = hp_bar(prog.current_hp, max_hp)
     zet_dropped = walk_result.get("zet_dropped", 0)
     step_line   = f"+1 Step  ·  +{xp_gained} XP"
     if zet_dropped > 0:
@@ -573,7 +572,6 @@ def battle_result_embed(won: bool, drops: dict, xp_result: dict, enemy_name: str
             embed.add_field(name="🎊 Level Up!", value=f"You are now **Level {xp_result['new_level']}**!", inline=False)
             upgraded = xp_result.get("upgraded_cards", [])
             if upgraded:
-                # Deduplicate for display
                 unique = list(dict.fromkeys(upgraded))
                 embed.add_field(
                     name="🃏 Cards Leveled Up!",
@@ -620,9 +618,7 @@ def dialogue_opening_embed(npc: dict) -> discord.Embed:
     return embed
 
 
-
 def milestone_scene_embed(npc: dict, scene: dict) -> discord.Embed:
-    """Scripted NPC milestone scene — shown at key relationship thresholds instead of AI dialogue."""
     color = 0x3A3A5C if npc.get("id") == "shade" else COLOR_DIALOGUE
     embed = discord.Embed(color=color)
     embed.set_author(name=f"{npc['emoji']}  {npc['name']}  ·  {scene['title']}")
@@ -719,7 +715,6 @@ def card_collection_embed(collection: list[dict], page: int = 0) -> discord.Embe
         class_tag   = restriction.title() if restriction else "Any class"
         qty_tag     = f" ×{entry['quantity']}" if entry["quantity"] > 1 else ""
 
-        # Show damage bonus for scaled effect types
         effect    = card.get("effect", {})
         etype     = effect.get("type", "")
         bonus_pct = int((level - 1) * 15)
@@ -1524,7 +1519,7 @@ def npc_sell_embed(sellable: list, npc: dict, player_zet: int) -> discord.Embed:
 
 
 # ---------------------------------------------------------------------------
-# GATHERING Embeds  (add these to the bottom of ui/embeds.py)
+# GATHERING Embeds
 # ---------------------------------------------------------------------------
 
 RARITY_COLORS = {
@@ -1543,78 +1538,7 @@ SKILL_EMOJI = {
 }
 
 
-# ---------------------------------------------------------------------------
-# MINI-BOSS Embeds  (Phase 3)
-# ---------------------------------------------------------------------------
-
-def miniboss_encounter_embed(player, zone_data: dict, enemy: dict) -> discord.Embed:
-    """Dramatic encounter screen for mini-boss fights."""
-    prog     = player.progression
-    stats    = player.stats
-    max_hp   = stats.vit * 5
-    embed = discord.Embed(
-        title=f"{enemy.get('emoji','⚔️')}  {enemy['name']}  ·  Elite Encounter",
-        color=0x8B0000,
-    )
-    enemy_desc = enemy.get("description", "An elite enemy blocks your path.")
-    embed.description = f"*{enemy_desc}*\n\nThis is no ordinary opponent. Proceed carefully."
-    hp_display = hp_bar(prog.current_hp, max_hp)
-    embed.add_field(
-        name=f"Your Status  ·  Lv.{prog.level}",
-        value=f"`{hp_display}` **{prog.current_hp}/{max_hp}** HP  ·  💰 **{prog.zet_wallet:,} Ƶ**",
-        inline=False,
-    )
-    enemy_hp = enemy.get("hp", 100)
-    embed.add_field(
-        name=f"{enemy.get('emoji','⚔️')} {enemy['name']}",
-        value=f"HP: **{enemy_hp}**  ·  ATK: **{enemy.get('atk',0)}**  ·  DEF: **{enemy.get('defense',0)}**",
-        inline=False,
-    )
-    embed.add_field(
-        name="⚠️ Elite",
-        value="Guaranteed rare/epic drops on defeat. Respawns in 6 hours.",
-        inline=False,
-    )
-    embed.set_footer(text=f"{zone_data.get('name', zone_data['id'])}  ·  Elite spawn")
-    return embed
-
-
-def miniboss_defeat_embed(player, enemy: dict, drops: dict, xp_result: dict, announce: str) -> discord.Embed:
-    """Victory screen shown to the player who defeated the mini-boss."""
-    enemy_name = enemy.get("name", "Elite")
-    embed = discord.Embed(title=f"⚔️  {enemy_name} Defeated!", color=0xFFD700)
-    embed.description = (
-        f"*You stand over the fallen {enemy_name}. The zone feels different now.*\n\n"
-        f"📣 **Server announcement:** {announce}"
-    )
-    rewards = []
-    if drops.get("zet"):
-        rewards.append(f"💰 +{drops['zet']:,} Ƶ")
-    for card_id in drops.get("cards", []):
-        from game.data import get_card
-        card = get_card(card_id)
-        if card:
-            rewards.append(f"{card['emoji']} {card['name']} *(card)*")
-    for item_id in drops.get("items", []):
-        from game.data import get_item
-        item = get_item(item_id)
-        if item:
-            rewards.append(f"{item['emoji']} {item['name']}")
-    if rewards:
-        embed.add_field(name="🏆 Drops", value="\n".join(rewards), inline=False)
-    xp = xp_result.get("xp_gained", 0)
-    embed.add_field(name="✨ XP", value=f"+{xp} XP", inline=True)
-    if xp_result.get("leveled_up"):
-        embed.add_field(name="🆙 Level Up!", value=f"Now **Lv.{xp_result['new_level']}**", inline=True)
-    embed.set_footer(text="Elite respawns in 6 hours")
-    return embed
-
-
 def gathering_node_embed(player, zone_data: dict, node: dict) -> discord.Embed:
-    """
-    Shown during walk when a gathering node is discovered.
-    Prompts player to gather or keep walking.
-    """
     from game.gathering import get_skill
     skill     = get_skill(node["skill"])
     rarity    = node.get("rarity", "common")
@@ -1647,10 +1571,6 @@ def gathering_node_embed(player, zone_data: dict, node: dict) -> discord.Embed:
 
 
 def gathering_result_embed(player, node: dict, result: dict) -> discord.Embed:
-    """
-    Shown after a gather attempt succeeds or fails.
-    result dict is the return value from process_gather().
-    """
     from game.gathering import get_skill, SKILL_MAX_LEVEL, skill_xp_to_next
 
     skill_id   = node["skill"]
@@ -1684,7 +1604,6 @@ def gathering_result_embed(player, node: dict, result: dict) -> discord.Embed:
                 value=f"**{skill['name']}** is now **Level {new_level}**! Higher level nodes unlocked.",
                 inline=False,
             )
-        # XP progress bar for skill
         if new_level < SKILL_MAX_LEVEL:
             threshold  = skill_xp_to_next(new_level)
             current_xp = skill_res.get("xp_remaining", 0)
@@ -1721,10 +1640,6 @@ def gathering_result_embed(player, node: dict, result: dict) -> discord.Embed:
 
 
 def gathering_skills_embed(skills_data: list[dict]) -> discord.Embed:
-    """
-    Shows all 6 gathering skills with current level/XP.
-    skills_data: list of {skill_type, level, xp}
-    """
     from game.gathering import GATHERING_SKILLS, SKILL_MAX_LEVEL, skill_xp_to_next
 
     embed = discord.Embed(
@@ -1766,4 +1681,357 @@ def gathering_skills_embed(skills_data: list[dict]) -> discord.Embed:
         )
 
     embed.set_footer(text="Max level 10 per skill (Island 1) · Walk to gain skill XP")
+    return embed
+
+
+# ---------------------------------------------------------------------------
+# MINI-BOSS Embeds  (Phase 3)
+# ---------------------------------------------------------------------------
+
+def miniboss_encounter_embed(player, zone_data: dict, enemy: dict) -> discord.Embed:
+    prog     = player.progression
+    stats    = player.stats
+    max_hp   = stats.vit * 5
+    embed = discord.Embed(
+        title=f"{enemy.get('emoji','⚔️')}  {enemy['name']}  ·  Elite Encounter",
+        color=0x8B0000,
+    )
+    enemy_desc = enemy.get("description", "An elite enemy blocks your path.")
+    embed.description = f"*{enemy_desc}*\n\nThis is no ordinary opponent. Proceed carefully."
+    hp_display = hp_bar(prog.current_hp, max_hp)
+    embed.add_field(
+        name=f"Your Status  ·  Lv.{prog.level}",
+        value=f"`{hp_display}` **{prog.current_hp}/{max_hp}** HP  ·  💰 **{prog.zet_wallet:,} Ƶ**",
+        inline=False,
+    )
+    enemy_hp = enemy.get("hp", 100)
+    embed.add_field(
+        name=f"{enemy.get('emoji','⚔️')} {enemy['name']}",
+        value=f"HP: **{enemy_hp}**  ·  ATK: **{enemy.get('atk',0)}**  ·  DEF: **{enemy.get('defense',0)}**",
+        inline=False,
+    )
+    embed.add_field(
+        name="⚠️ Elite",
+        value="Guaranteed rare/epic drops on defeat. Respawns in 6 hours.",
+        inline=False,
+    )
+    embed.set_footer(text=f"{zone_data.get('name', zone_data['id'])}  ·  Elite spawn")
+    return embed
+
+
+def miniboss_defeat_embed(player, enemy: dict, drops: dict, xp_result: dict, announce: str) -> discord.Embed:
+    enemy_name = enemy.get("name", "Elite")
+    embed = discord.Embed(title=f"⚔️  {enemy_name} Defeated!", color=0xFFD700)
+    embed.description = (
+        f"*You stand over the fallen {enemy_name}. The zone feels different now.*\n\n"
+        f"📣 **Server announcement:** {announce}"
+    )
+    rewards = []
+    if drops.get("zet"):
+        rewards.append(f"💰 +{drops['zet']:,} Ƶ")
+    for card_id in drops.get("cards", []):
+        from game.data import get_card
+        card = get_card(card_id)
+        if card:
+            rewards.append(f"{card['emoji']} {card['name']} *(card)*")
+    for item_id in drops.get("items", []):
+        from game.data import get_item
+        item = get_item(item_id)
+        if item:
+            rewards.append(f"{item['emoji']} {item['name']}")
+    if rewards:
+        embed.add_field(name="🏆 Drops", value="\n".join(rewards), inline=False)
+    xp = xp_result.get("xp_gained", 0)
+    embed.add_field(name="✨ XP", value=f"+{xp} XP", inline=True)
+    if xp_result.get("leveled_up"):
+        embed.add_field(name="🆙 Level Up!", value=f"Now **Lv.{xp_result['new_level']}**", inline=True)
+    embed.set_footer(text="Elite respawns in 6 hours")
+    return embed
+
+
+# ---------------------------------------------------------------------------
+# BANK Embed
+# ---------------------------------------------------------------------------
+
+def bank_embed(player, bank_balance: int) -> discord.Embed:
+    prog  = player.progression
+    embed = discord.Embed(
+        title="🏦  Mercer Bank",
+        description=(
+            "*Marble columns. A queue of anxious debtors. "
+            "The teller's smile doesn't reach their eyes.*\n\n"
+            "Your Ƶ is safe here — for a modest processing fee on withdrawal."
+        ),
+        color=COLOR_MAIN,
+    )
+    embed.add_field(name="💰 Wallet",       value=f"**{prog.zet_wallet:,} Ƶ**", inline=True)
+    embed.add_field(name="🏦 Bank Balance", value=f"**{bank_balance:,} Ƶ**",    inline=True)
+    embed.add_field(
+        name="ℹ️ How it works",
+        value=(
+            "**Deposit** — free, instant.\n"
+            "**Withdraw** — Mercer charges **5%** processing fee.\n"
+            "Bank balance is safe from PvP losses."
+        ),
+        inline=False,
+    )
+    embed.set_footer(text="Minimum 10 Ƶ per transaction")
+    return embed
+
+
+# ---------------------------------------------------------------------------
+# COUNCIL HALL Embed
+# ---------------------------------------------------------------------------
+
+_COUNCIL_NOTICES = [
+    (
+        "Revised Licensing Ordinance 44-C",
+        "All independent traders in the Port District must renew trading licenses by end of month. "
+        "Fee: 200 Ƶ. Non-compliance results in immediate suspension of trading rights.\n"
+        "*— Council Secretary, on behalf of the Mercer Trading Company*",
+    ),
+    (
+        "Public Safety — Conservation Zone",
+        "Citizens are reminded that Ashwood Forest is strictly off-limits without a Council permit. "
+        "Unauthorized entry is a criminal offence. Permit applications: 500 Ƶ processing fee.\n"
+        "*— Council, Town Safety Division*",
+    ),
+    (
+        "Harvest Tax Notice — Farmlands",
+        "The quarterly harvest assessment takes place on the 15th. "
+        "All farmland operators: the standard 40% levy applies. Irregularities will be investigated.\n"
+        "*— Revenue Division, Mercer Trading Company*",
+    ),
+    (
+        "Dock Access — New Restrictions",
+        "All dock access between 22:00 and 06:00 requires advance written approval. "
+        "Applications must be submitted 48 hours in advance.\n"
+        "*— Port Authority, Mercer Trading Company*",
+    ),
+    (
+        "Debt Settlement Programme",
+        "Citizens with outstanding debt to Mercer Bank may now apply for extended repayment plans. "
+        "Interest rates may vary. Terms subject to change without notice.\n"
+        "*— Mercer Bank, Ironhaven Branch*",
+    ),
+]
+
+_COUNCIL_NOTICES_POST_ARC1 = [
+    (
+        "Emergency Audit — In Progress",
+        "A full audit of Mercer Trading Company forest contracts is underway. "
+        "Citizens with relevant information may contact the Council Hall directly.\n"
+        "*— Independent Oversight Committee*",
+    ),
+    (
+        "Licensing Ordinances — Under Review",
+        "Several licensing ordinances are suspended pending the ongoing audit. "
+        "Citizens: hold renewal applications until further notice.\n"
+        "*— Council Hall*",
+    ),
+    (
+        "Public Statement — Councilmember Aldric",
+        "The Council is committed to transparency. All operations affecting Ironhaven citizens "
+        "will be reviewed. We thank those who came forward.\n"
+        "*— Councilmember Aldric*",
+    ),
+]
+
+
+def council_hall_embed(arc1_done: bool = False) -> discord.Embed:
+    embed = discord.Embed(
+        title="🏛️  Council Hall — Notice Board",
+        description=(
+            "*Imposing bronze doors, always slightly ajar. "
+            "Inside: rows of clerks, stacks of ledgers, "
+            "and the specific smell of bureaucracy working for someone else.*"
+        ),
+        color=COLOR_MAIN,
+    )
+    notices = _COUNCIL_NOTICES_POST_ARC1 if arc1_done else _COUNCIL_NOTICES
+    shown   = random.sample(notices, min(2, len(notices)))
+    for title, text in shown:
+        embed.add_field(name=f"📋 {title}", value=text, inline=False)
+    if arc1_done:
+        embed.add_field(
+            name="📌 Current Mood",
+            value="*The atmosphere in the Hall has shifted. Clerks speak in lower voices.*",
+            inline=False,
+        )
+    embed.set_footer(text="Notices rotate periodically · The Council acts on Mercer's behalf")
+    return embed
+
+
+# ---------------------------------------------------------------------------
+# BARN Embeds
+# ---------------------------------------------------------------------------
+
+def barn_embed(barn: dict, player) -> discord.Embed:
+    from game.data import get_item
+    BARN_MAX   = 50
+    slots_used = len(barn)
+    pct        = slots_used / max(BARN_MAX, 1)
+    bar        = "█" * int(pct * 10) + "░" * (10 - int(pct * 10))
+    embed = discord.Embed(
+        title="🏚️  Farmlands Barn — Community Storage",
+        description=(
+            f"*Communal storage for the farming community. "
+            f"Mercer takes 40% of the harvest — he doesn't take what's in here. Not yet.*\n\n"
+            f"`{bar}` **{slots_used}/{BARN_MAX}** item types stored"
+        ),
+        color=COLOR_MAIN,
+    )
+    if not barn:
+        embed.add_field(name="Empty", value="*Nothing stored yet. Deposit items from your bag.*", inline=False)
+    else:
+        lines = []
+        for item_id, qty in list(barn.items())[:10]:
+            item = get_item(item_id)
+            if item:
+                lines.append(f"{item['emoji']} **{item['name']}** ×{qty}")
+        embed.add_field(name="📦 Contents", value="\n".join(lines) or "*Empty*", inline=False)
+        if len(barn) > 10:
+            embed.add_field(name="", value=f"*…and {len(barn) - 10} more item types*", inline=False)
+    embed.add_field(name="💰 Wallet", value=f"{player.progression.zet_wallet:,} Ƶ", inline=True)
+    embed.set_footer(text="Key items, equipment, and cosmetics can't be stored · No capacity limit on quantities")
+    return embed
+
+
+def barn_deposit_embed(depositable: list) -> discord.Embed:
+    from game.data import get_item
+    embed = discord.Embed(
+        title="⬇️  Deposit to Barn",
+        description="Select an item to store. The full stack will be deposited.",
+        color=COLOR_MAIN,
+    )
+    for entry in depositable[:4]:
+        item = get_item(entry["item_id"])
+        if item:
+            embed.add_field(
+                name=f"{item['emoji']} {item['name']} ×{entry['quantity']}",
+                value=f"_{item['description'][:80]}_",
+                inline=False,
+            )
+    embed.set_footer(text="Deposits your entire stack of the selected item")
+    return embed
+
+
+def barn_withdraw_embed(barn: dict) -> discord.Embed:
+    from game.data import get_item
+    embed = discord.Embed(
+        title="⬆️  Withdraw from Barn",
+        description="Select an item to retrieve. The full stack will be returned to your bag.",
+        color=COLOR_MAIN,
+    )
+    for item_id, qty in list(barn.items())[:4]:
+        item = get_item(item_id)
+        if item:
+            embed.add_field(
+                name=f"{item['emoji']} {item['name']} ×{qty}",
+                value=f"_{item['description'][:80]}_",
+                inline=False,
+            )
+    embed.set_footer(text="Make sure your bag has a free slot before withdrawing")
+    return embed
+
+
+# ---------------------------------------------------------------------------
+# FISH MARKET Embed
+# ---------------------------------------------------------------------------
+
+def fish_market_embed(sellable: list, player) -> discord.Embed:
+    from game.data import get_item
+    embed = discord.Embed(
+        title="🐟  Fish Market",
+        description=(
+            "*The fish market buyers are independent — for now. "
+            "They pay honest prices. Unlike everything else in Ironhaven.*"
+        ),
+        color=COLOR_MAIN,
+    )
+    embed.add_field(name="💰 Wallet", value=f"{player.progression.zet_wallet:,} Ƶ", inline=False)
+    if not sellable:
+        embed.add_field(
+            name="Nothing to sell",
+            value="*You don't have any sellable items. Fish and gathered materials appear here.*",
+            inline=False,
+        )
+    else:
+        for entry in sellable[:6]:
+            item = get_item(entry["item_id"])
+            if item:
+                total = entry["sell_price"] * entry["quantity"]
+                embed.add_field(
+                    name=f"{item['emoji']} {item['name']} ×{entry['quantity']}",
+                    value=f"{entry['sell_price']:,} Ƶ each  ·  Total: **{total:,} Ƶ**",
+                    inline=False,
+                )
+    embed.set_footer(text="Sells your full stack · Independent from Mercer's pricing")
+    return embed
+
+
+# ---------------------------------------------------------------------------
+# ANCIENT VAULT Embeds
+# ---------------------------------------------------------------------------
+
+def vault_embed(zone_cleared: bool, on_cooldown: bool, cd_secs: int = 0) -> discord.Embed:
+    from game.respawn import format_respawn_time
+    embed = discord.Embed(
+        title="🗝️  Ancient Vault",
+        description=(
+            "*A sealed stone chamber in the deepest part of the ruins. "
+            "It was opened recently. Something was taken — or left.*"
+        ),
+        color=COLOR_MAIN,
+    )
+    if on_cooldown:
+        t = format_respawn_time(cd_secs)
+        embed.add_field(
+            name="🔒 Recently Looted",
+            value=f"The vault was opened not long ago. Resets in **{t}**.",
+            inline=False,
+        )
+        embed.color = COLOR_WARNING
+    elif not zone_cleared:
+        embed.add_field(
+            name="🔒 Vault Sealed",
+            value=(
+                "The vault won't open while enemies roam the ruins.\n"
+                "Clear the zone first — defeat enemies until the zone goes quiet."
+            ),
+            inline=False,
+        )
+        embed.color = COLOR_WARNING
+    else:
+        embed.add_field(
+            name="🔓 Vault Open",
+            value="The ruins are quiet. The vault can be opened.",
+            inline=False,
+        )
+        embed.color = COLOR_SUCCESS
+    embed.set_footer(text="Resets every 6 hours · Rare/Epic/Legendary card inside")
+    return embed
+
+
+def vault_opened_embed(player, card: dict | None, bonus_xp: int, xp_result: dict) -> discord.Embed:
+    embed = discord.Embed(
+        title="✨  Vault Opened",
+        description=(
+            "*The stone door grinds. Inside: a chamber untouched for decades. "
+            "The air is cold and absolutely still.*"
+        ),
+        color=COLOR_SUCCESS,
+    )
+    rewards = []
+    if card:
+        rewards.append(f"{card['emoji']} **{card['name']}** [{card['rarity'].title()}] — added to deck")
+    rewards.append(f"⭐ **+{bonus_xp} XP**")
+    embed.add_field(name="🎁 Found Inside", value="\n".join(rewards), inline=False)
+    if xp_result.get("leveled_up"):
+        embed.add_field(
+            name="🆙 Level Up!",
+            value=f"You are now **Level {xp_result['new_level']}**!",
+            inline=False,
+        )
+    embed.set_footer(text="The vault seals again for 6 hours")
     return embed

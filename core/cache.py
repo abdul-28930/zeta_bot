@@ -345,3 +345,30 @@ async def get_miniboss_defeated_by(zone_id: str) -> str | None:
     if not state:
         return None
     return state.get("defeated_by")
+
+
+# ---------------------------------------------------------------------------
+# Ancient Vault cooldown
+# Per-player, 6-hour TTL. Key disappears when loot resets.
+# ---------------------------------------------------------------------------
+
+VAULT_COOLDOWN_TTL = 21600   # 6 hours in seconds
+
+
+async def is_vault_on_cooldown(user_id: int) -> bool:
+    """True if this player has already looted the vault and it hasn't reset yet."""
+    r = get_redis()
+    return bool(await r.get(f"vault_cooldown:{user_id}"))
+
+
+async def set_vault_cooldown(user_id: int) -> None:
+    """Start the 6-hour cooldown after a player loots the vault."""
+    r = get_redis()
+    await r.set(f"vault_cooldown:{user_id}", "1", ex=VAULT_COOLDOWN_TTL)
+
+
+async def get_vault_cooldown_seconds(user_id: int) -> int:
+    """Seconds until the vault resets for this player. Returns 0 if not on cooldown."""
+    r   = get_redis()
+    ttl = await r.ttl(f"vault_cooldown:{user_id}")
+    return max(0, ttl)

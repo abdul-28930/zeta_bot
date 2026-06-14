@@ -664,6 +664,29 @@ NPCS: dict[str, dict] = {
         ],
         "relationship_milestones": {},
     },
+    "old_boris": {
+        "id": "old_boris", "name": "Old Boris", "role": "Shipwright",
+        "zone_id": "port_district", "building_id": "shipyard", "emoji": "⚓",
+        "persona": (
+            "You are Old Boris, the shipwright at Ironhaven's Shipyard. You are in your late 60s, "
+            "massive-handed, slow-moving, and deeply nostalgic. You've been repairing ships since "
+            "before Mercer arrived. You remember when the shipyard built ships — not just patched "
+            "them. Now you patch Mercer's fleet for Mercer's docking fees and try not to think "
+            "about what the ships carry. You speak slowly, in technical maritime terms, always "
+            "getting to the point. You have one hope: a small sloop you've been secretly repairing "
+            "in the back berth. You don't talk about it unless someone earns your trust."
+        ),
+        "opening_lines": [
+            "Busy. What do you need.",
+            "If you're not here about the caulking order, make it quick.",
+            "This place used to build ships. Now we just keep old ones running.",
+        ],
+        "relationship_milestones": {
+            5:  "He hands you coffee without being asked. It's been sitting on the burner too long.",
+            10: "He mentions 'a project in the back' without explaining what it is.",
+            25: "He takes you to see it — a small sloop, nearly complete. 'Just maintenance,' he says, unconvincingly.",
+        },
+    },
 }
 
 # ---------------------------------------------------------------------------
@@ -1087,7 +1110,7 @@ MINI_BOSSES: dict[str, str] = {
 }
 
 # ---------------------------------------------------------------------------
-# ITEMS — original + walk finds + bag upgrades + gathering tools/resources + mini-boss drops
+# ITEMS
 # ---------------------------------------------------------------------------
 
 ITEMS: dict[str, dict] = {
@@ -1225,7 +1248,7 @@ ITEMS: dict[str, dict] = {
         "description": "Reinforced hardwood with iron clasps. Increases bag capacity to 75 slots. Use from your inventory.",
         "effect": None, "capacity": 75, "sell_price": 0, "stackable": False, "usable_in_battle": False,
     },
-    # ── Gathering tools (Phase 2) ─────────────────────────────────────────────
+    # ── Gathering tools ───────────────────────────────────────────────────────
     "rusty_pickaxe": {
         "id": "rusty_pickaxe", "name": "Rusty Pickaxe", "emoji": "⛏️", "type": "tool",
         "slot": "pickaxe", "description": "Old but functional. Equip from your bag — required for mining.",
@@ -1258,7 +1281,7 @@ ITEMS: dict[str, dict] = {
     # ── Gathering resources — wood ────────────────────────────────────────────
     "common_wood":   {"id": "common_wood", "name": "Common Wood", "emoji": "🌳", "type": "material", "description": "Straight-grained common timber. Standard crafting material.",                          "effect": None, "sell_price": 15, "stackable": True, "usable_in_battle": False},
     "ashwood_plank": {"id": "ashwood_plank","name": "Ashwood Plank","emoji": "🌲","type": "material", "description": "Dense ashwood timber, cut and ready. Quality crafting material.",                     "effect": None, "sell_price": 40, "stackable": True, "usable_in_battle": False},
-    # ── Mini-boss drop items (Phase 3) ───────────────────────────────────────
+    # ── Mini-boss drop items ──────────────────────────────────────────────────
     "dock_authority_badge": {
         "id": "dock_authority_badge", "name": "Dock Authority Badge", "emoji": "🪪", "type": "key_item",
         "description": "Mercer's private badge, not the Council's. Proof that the docks aren't as official as they look.",
@@ -1312,7 +1335,7 @@ ITEMS: dict[str, dict] = {
 }
 
 # ---------------------------------------------------------------------------
-# SHOPS — with gathering tools added to general_store and equipment_shop
+# SHOPS
 # ---------------------------------------------------------------------------
 
 SHOPS: dict[str, dict] = {
@@ -1369,7 +1392,7 @@ SHOPS: dict[str, dict] = {
 }
 
 # ---------------------------------------------------------------------------
-# STORYLETS — Arc 1 (original 3 + Phase 2 additions: 9 new)
+# STORYLETS
 # ---------------------------------------------------------------------------
 
 STORYLETS: dict[str, dict] = {
@@ -1443,7 +1466,6 @@ STORYLETS: dict[str, dict] = {
             "take_bribe":   {"flag_set": "arc1_complete_bribed",  "xp": 50,  "zet": 200, "next_storylet": None,        "message": "You take the pouch. *'Good.'* He turns away. — Arc 1 Complete (bribed path). Mercer +5, Resistance -10."},
         },
     },
-    # ── Phase 2 additions: Tomás chain + parallel tracks + climax ─────────────
     "arc1_tomas_letter": {
         "id": "arc1_tomas_letter", "arc": "arc_1", "title": "Tomás and the Letter",
         "zone_id": "market_quarter", "trigger": {"flag": "arc1_step1_accepted", "npc_id": "old_tomas", "relationship_min": 15},
@@ -1769,10 +1791,5 @@ def cards_for_class(class_id: str) -> list[dict]:
     return result
 
 def get_max_energy(player_stats: dict) -> int:
-    """
-    Energy cap scales with INT. Base 6, +1 per 5 INT points.
-    Warriors (INT 2) → 6   Clerics (INT 9) → 7   Mages (INT 12) → 8
-    Call at battle start to set state[\"max_energy\"].
-    """
     intel = player_stats.get("intel", 0)
     return 6 + (intel // 5)

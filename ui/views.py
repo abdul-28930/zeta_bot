@@ -37,6 +37,8 @@ from game.world import (
     remove_item, set_flag, update_player_hp, update_player_zone, use_consumable,
 )
 from ui.embeds import (
+    bank_embed, barn_embed, barn_deposit_embed, barn_withdraw_embed,
+    fish_market_embed, vault_embed, vault_opened_embed, council_hall_embed,
     battle_embed, battle_result_embed, building_embed, card_collection_embed,
     char_creation_class_embed, char_creation_confirm_embed, char_creation_race_embed,
     dialogue_embed, dialogue_opening_embed, error_embed, exits_embed,
@@ -396,7 +398,6 @@ class WalkButton(discord.ui.Button):
         daily_steps = await get_step_count(self.user_id, zone_id)
         total_steps = await get_total_steps(self.user_id, zone_id)
 
-        # Phase 3: check zone cleared before rolling encounters
         from game.respawn import (
             check_encounter_allowed, should_encounter_miniboss,
             get_miniboss_for_zone, get_zone_status,
@@ -441,7 +442,6 @@ class WalkButton(discord.ui.Button):
                         walk_result["relationship_npc_name"] = npc_data["name"]
             player = await get_full_player(self.user_id, session)
 
-        # Phase 3: mini-boss encounter (rolls before regular encounter)
         if not zone_cleared_flag and walk_result["event_type"] != "gathering_node":
             if await should_encounter_miniboss(zone_id):
                 mb_enemy = await get_miniboss_for_zone(zone_id)
@@ -481,7 +481,6 @@ class WalkButton(discord.ui.Button):
             view  = GatheringNodeView(self.user_id, node["id"], zone_id)
             return await interaction.edit_original_response(embed=embed, view=view)
 
-        # Check if a walk-triggered storylet should fire
         async with get_session() as session:
             from game.storylets import check_storylet_trigger
             from game.world_state import get_zone_state_description_async
@@ -495,7 +494,6 @@ class WalkButton(discord.ui.Button):
             view  = StoryletView(self.user_id, active_storylet)
             return await interaction.edit_original_response(embed=embed, view=view)
 
-        # Phase 3: get zone status for embed display (respawn countdowns)
         zone_status = await get_zone_status(self.user_id, zone_id)
         walk_result["zone_cleared"]          = zone_cleared_flag
         walk_result["zone_cleared_respawn"]  = zone_status.get("enemy_respawn_secs", 1800)
@@ -652,13 +650,19 @@ class BuildingView(discord.ui.View):
         super().__init__(timeout=180)
         self.user_id  = user_id
         self.building = building
+
+        # NPC talk button (only if NPC exists in NPCS dict)
         if building.get("npc"):
             npc = get_npc(building["npc"])
             if npc:
                 self.add_item(TalkToNPCButton(user_id, building["npc"]))
+
+        # Shop browse button
         shop = get_shop_for_building(building["id"])
         if shop:
             self.add_item(OpenShopButton(user_id, shop["id"]))
+
+        # Building-type specific actions
         btype = building.get("type")
         if btype == "heal":
             self.add_item(HealButton(user_id))
@@ -670,8 +674,23 @@ class BuildingView(discord.ui.View):
             self.add_item(OpenGuildButton(user_id))
         elif btype == "market":
             self.add_item(OpenAuctionButton(user_id))
-        if building.get("npc") and get_shop_for_building(building["id"]):
+        elif btype == "bank":
+            self.add_item(OpenBankButton(user_id))
+        elif btype == "civic":
+            self.add_item(OpenCouncilHallButton(user_id))
+        elif btype == "ships":
+            self.add_item(OpenShipyardButton(user_id))
+        elif btype == "storage":
+            self.add_item(OpenBarnButton(user_id))
+        elif btype == "dungeon_reward":
+            self.add_item(OpenVaultButton(user_id))
+
+        # Sell button — fish market gets its own dedicated button
+        if building["id"] == "fish_market":
+            self.add_item(FishMarketSellButton(user_id))
+        elif building.get("npc") and get_shop_for_building(building["id"]):
             self.add_item(OpenSellButton(user_id, building["npc"]))
+
         self.add_item(ExitBuildingButton(user_id))
 
 
@@ -945,6 +964,7 @@ _NPC_SUGGESTIONS: dict[str, list[str]] = {
     "bora":         ["What do people talk about in here?", "What have the soldiers been saying?", "Tell me about Ironhaven."],
     "shade":        ["Who are you?", "What are you doing in the ruins?", "What do you know about Mercer?"],
     "old_grull":    ["How's the fishing?", "What's changed near the caves?", "Tell me about the cove."],
+    "old_boris":    ["Tell me about the shipyard.", "What was Ironhaven like before Mercer?", "What are you building in the back?"],
 }
 
 
@@ -1039,7 +1059,6 @@ async def _send_dialogue_message(interaction, user_id, npc_id, player_message):
             rel    = await get_or_create_relationship(user_id, npc_id, session)
             ready_quest = await has_ready_to_complete(user_id, npc_id, session)
 
-            # Check milestone scenes before quest/AI
             from game.npc_scenes import get_milestone_scene
             milestone = await get_milestone_scene(user_id, npc_id, rel.relationship_score, session)
             if milestone:
@@ -1303,7 +1322,6 @@ class CardButton(discord.ui.Button):
         if outcome == "lose":
             await _handle_battle_loss(interaction, self.user_id, state); return
 
-        # Enemy does NOT attack after each card — only on Pass Turn
         await set_battle_state(self.user_id, state)
         await interaction.response.edit_message(embed=battle_embed(state, []), view=BattleView(self.user_id, state))
 
@@ -1374,7 +1392,6 @@ async def _handle_battle_win(interaction, user_id, state):
         xp_result["xp_gained"] = xp_reward
         await update_player_hp(user_id, max(1, state["player_hp"]), session)
 
-    # Phase 3: handle mini-boss defeat OR record regular kill for respawn timer
     enemy_data = ENEMIES.get(enemy_id, {})
     if enemy_data.get("is_miniboss"):
         from game.respawn import handle_miniboss_defeat
@@ -1400,7 +1417,6 @@ async def _handle_battle_loss(interaction, user_id, state):
         await deduct_zet(user_id, 10, session)
     embed = battle_result_embed(False, {}, {}, enemy_name)
     view  = BackToZoneView(user_id)
-    # Fixed: use edit_original_response after defer (not response.edit_message)
     await interaction.edit_original_response(embed=embed, view=view)
 
 
@@ -1458,7 +1474,6 @@ class InventoryView(discord.ui.View):
 
 
 class UseItemButton(discord.ui.Button):
-    """Use a consumable item from the bag (outside battle)."""
     def __init__(self, user_id: int, item_id: str, item: dict):
         super().__init__(
             label=f"Use {item['name'][:22]}",
@@ -1923,7 +1938,6 @@ class SkipGatherButton(discord.ui.Button):
 
 
 class EquipToolButton(discord.ui.Button):
-    """Equip a tool from the bag into its gathering slot."""
     def __init__(self, user_id: int, item_id: str, item: dict):
         super().__init__(
             label=f"Equip {item['name'][:20]}",
@@ -2454,4 +2468,479 @@ class SellToNPCButton(discord.ui.Button):
         embed = npc_sell_embed(sellable, npc, player.progression.zet_wallet)
         embed.add_field(name="✅" if success else "❌", value=msg, inline=False)
         view  = NPCSellView(self.user_id, self.npc_id, sellable, player.progression.zet_wallet)
+        await interaction.edit_original_response(embed=embed, view=view)
+
+
+# =============================================================================
+# BANK VIEWS
+# =============================================================================
+
+class OpenBankButton(discord.ui.Button):
+    def __init__(self, user_id: int):
+        super().__init__(label="Banking", emoji="🏦", style=discord.ButtonStyle.primary)
+        self.user_id = user_id
+
+    async def callback(self, interaction: discord.Interaction):
+        if _not_your_game(interaction, self.user_id):
+            return await interaction.response.send_message("Not your game!", ephemeral=True)
+        async with get_session() as session:
+            from game.world import get_bank_balance
+            player  = await get_full_player(self.user_id, session)
+            balance = await get_bank_balance(self.user_id, session)
+        embed = bank_embed(player, balance)
+        view  = BankView(self.user_id, player.progression.zet_wallet, balance)
+        await interaction.response.edit_message(embed=embed, view=view)
+
+
+class BankView(discord.ui.View):
+    def __init__(self, user_id: int, wallet: int, balance: int):
+        super().__init__(timeout=180)
+        self.user_id = user_id
+        self.wallet  = wallet
+        self.balance = balance
+
+    @discord.ui.button(label="Deposit", emoji="⬇️", style=discord.ButtonStyle.success)
+    async def deposit(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if _not_your_game(interaction, self.user_id):
+            return await interaction.response.send_message("Not your game!", ephemeral=True)
+        await interaction.response.send_modal(BankDepositModal(self.user_id))
+
+    @discord.ui.button(label="Withdraw (5% fee)", emoji="⬆️", style=discord.ButtonStyle.danger)
+    async def withdraw(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if _not_your_game(interaction, self.user_id):
+            return await interaction.response.send_message("Not your game!", ephemeral=True)
+        await interaction.response.send_modal(BankWithdrawModal(self.user_id))
+
+    @discord.ui.button(label="Back", emoji="◀️", style=discord.ButtonStyle.secondary)
+    async def back(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if _not_your_game(interaction, self.user_id):
+            return await interaction.response.send_message("Not your game!", ephemeral=True)
+        async with get_session() as session:
+            player = await get_full_player(self.user_id, session)
+        zone  = get_zone(player.progression.current_zone_id)
+        embed = zone_embed(player, zone)
+        view  = MainZoneView(self.user_id, player, zone)
+        await interaction.response.edit_message(embed=embed, view=view)
+
+
+class BankDepositModal(discord.ui.Modal, title="Deposit to Mercer Bank"):
+    amount_input = discord.ui.TextInput(
+        label="Amount to deposit (Ƶ)", placeholder="e.g. 500",
+        min_length=1, max_length=8,
+    )
+
+    def __init__(self, user_id: int):
+        super().__init__()
+        self.user_id = user_id
+
+    async def on_submit(self, interaction: discord.Interaction):
+        try:
+            await interaction.response.defer()
+        except discord.errors.NotFound:
+            return
+        try:
+            amount = int(self.amount_input.value.strip().replace(",", ""))
+        except ValueError:
+            return await interaction.edit_original_response(
+                embed=error_embed("Enter a whole number."), view=BackToZoneView(self.user_id)
+            )
+        async with get_session() as session:
+            from game.world import deposit_to_bank, get_bank_balance
+            success, msg = await deposit_to_bank(self.user_id, amount, session)
+            player  = await get_full_player(self.user_id, session)
+            balance = await get_bank_balance(self.user_id, session)
+        embed = bank_embed(player, balance)
+        embed.add_field(name="✅" if success else "❌", value=msg, inline=False)
+        view  = BankView(self.user_id, player.progression.zet_wallet, balance)
+        await interaction.edit_original_response(embed=embed, view=view)
+
+
+class BankWithdrawModal(discord.ui.Modal, title="Withdraw from Mercer Bank"):
+    amount_input = discord.ui.TextInput(
+        label="Amount to withdraw (Ƶ)", placeholder="e.g. 500 — 5% fee deducted",
+        min_length=1, max_length=8,
+    )
+
+    def __init__(self, user_id: int):
+        super().__init__()
+        self.user_id = user_id
+
+    async def on_submit(self, interaction: discord.Interaction):
+        try:
+            await interaction.response.defer()
+        except discord.errors.NotFound:
+            return
+        try:
+            amount = int(self.amount_input.value.strip().replace(",", ""))
+        except ValueError:
+            return await interaction.edit_original_response(
+                embed=error_embed("Enter a whole number."), view=BackToZoneView(self.user_id)
+            )
+        async with get_session() as session:
+            from game.world import withdraw_from_bank, get_bank_balance
+            success, msg = await withdraw_from_bank(self.user_id, amount, session)
+            player  = await get_full_player(self.user_id, session)
+            balance = await get_bank_balance(self.user_id, session)
+        embed = bank_embed(player, balance)
+        embed.add_field(name="✅" if success else "❌", value=msg, inline=False)
+        view  = BankView(self.user_id, player.progression.zet_wallet, balance)
+        await interaction.edit_original_response(embed=embed, view=view)
+
+
+# =============================================================================
+# COUNCIL HALL VIEW
+# =============================================================================
+
+class OpenCouncilHallButton(discord.ui.Button):
+    def __init__(self, user_id: int):
+        super().__init__(label="Notice Board", emoji="🏛️", style=discord.ButtonStyle.primary)
+        self.user_id = user_id
+
+    async def callback(self, interaction: discord.Interaction):
+        if _not_your_game(interaction, self.user_id):
+            return await interaction.response.send_message("Not your game!", ephemeral=True)
+        async with get_session() as session:
+            from game.world import get_flag
+            arc1_done = await get_flag(self.user_id, "arc1_resolved", session)
+        embed = council_hall_embed(arc1_done=bool(arc1_done))
+        view  = CouncilHallView(self.user_id)
+        await interaction.response.edit_message(embed=embed, view=view)
+
+
+class CouncilHallView(discord.ui.View):
+    def __init__(self, user_id: int):
+        super().__init__(timeout=180)
+        self.user_id = user_id
+        self.add_item(BackButton(user_id))
+
+
+# =============================================================================
+# SHIPYARD VIEW
+# =============================================================================
+
+class OpenShipyardButton(discord.ui.Button):
+    def __init__(self, user_id: int):
+        super().__init__(label="Talk to Old Boris", emoji="⚓", style=discord.ButtonStyle.primary)
+        self.user_id = user_id
+
+    async def callback(self, interaction: discord.Interaction):
+        if _not_your_game(interaction, self.user_id):
+            return await interaction.response.send_message("Not your game!", ephemeral=True)
+        npc = get_npc("old_boris")
+        if not npc:
+            return await interaction.response.send_message(
+                "Old Boris isn't here right now.", ephemeral=True
+            )
+        async with get_session() as session:
+            await get_or_create_relationship(self.user_id, "old_boris", session)
+        embed = dialogue_opening_embed(npc)
+        view  = DialogueView(self.user_id, "old_boris", _default_suggestions("old_boris"))
+        await interaction.response.edit_message(embed=embed, view=view)
+
+
+# =============================================================================
+# BARN VIEWS
+# =============================================================================
+
+_BARN_BLOCKED_TYPES_VIEW = {"key_item", "bag_upgrade", "equipment", "cosmetic", "lore"}
+
+
+class OpenBarnButton(discord.ui.Button):
+    def __init__(self, user_id: int):
+        super().__init__(label="Community Storage", emoji="🏚️", style=discord.ButtonStyle.primary)
+        self.user_id = user_id
+
+    async def callback(self, interaction: discord.Interaction):
+        if _not_your_game(interaction, self.user_id):
+            return await interaction.response.send_message("Not your game!", ephemeral=True)
+        async with get_session() as session:
+            from game.world import get_barn_inventory
+            player = await get_full_player(self.user_id, session)
+            barn   = await get_barn_inventory(self.user_id, session)
+        embed = barn_embed(barn, player)
+        view  = BarnView(self.user_id, barn)
+        await interaction.response.edit_message(embed=embed, view=view)
+
+
+class BarnView(discord.ui.View):
+    def __init__(self, user_id: int, barn: dict):
+        super().__init__(timeout=180)
+        self.user_id = user_id
+        self.barn    = barn
+
+    @discord.ui.button(label="Deposit Items", emoji="⬇️", style=discord.ButtonStyle.success)
+    async def deposit(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if _not_your_game(interaction, self.user_id):
+            return await interaction.response.send_message("Not your game!", ephemeral=True)
+        async with get_session() as session:
+            inv = await get_inventory(self.user_id, session)
+        from game.data import get_item as _gi
+        depositable = [
+            e for e in inv
+            if (_gi(e["item_id"]) or {}).get("type") not in _BARN_BLOCKED_TYPES_VIEW
+        ]
+        if not depositable:
+            return await interaction.response.send_message(
+                "Nothing in your bag that can be stored in the barn.", ephemeral=True
+            )
+        embed = barn_deposit_embed(depositable)
+        view  = BarnDepositView(self.user_id, depositable)
+        await interaction.response.edit_message(embed=embed, view=view)
+
+    @discord.ui.button(label="Withdraw Items", emoji="⬆️", style=discord.ButtonStyle.primary)
+    async def withdraw(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if _not_your_game(interaction, self.user_id):
+            return await interaction.response.send_message("Not your game!", ephemeral=True)
+        if not self.barn:
+            return await interaction.response.send_message("The barn is empty.", ephemeral=True)
+        embed = barn_withdraw_embed(self.barn)
+        view  = BarnWithdrawView(self.user_id, self.barn)
+        await interaction.response.edit_message(embed=embed, view=view)
+
+    @discord.ui.button(label="Back", emoji="◀️", style=discord.ButtonStyle.secondary)
+    async def back(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if _not_your_game(interaction, self.user_id):
+            return await interaction.response.send_message("Not your game!", ephemeral=True)
+        async with get_session() as session:
+            player = await get_full_player(self.user_id, session)
+        zone  = get_zone(player.progression.current_zone_id)
+        embed = zone_embed(player, zone)
+        view  = MainZoneView(self.user_id, player, zone)
+        await interaction.response.edit_message(embed=embed, view=view)
+
+
+class BarnDepositView(discord.ui.View):
+    def __init__(self, user_id: int, depositable: list):
+        super().__init__(timeout=180)
+        self.user_id = user_id
+        from game.data import get_item as _gi
+        for entry in depositable[:4]:
+            item = _gi(entry["item_id"])
+            if item:
+                self.add_item(BarnDepositItemButton(user_id, entry["item_id"], item, entry["quantity"]))
+        self.add_item(_BarnBackButton(user_id))
+
+
+class BarnDepositItemButton(discord.ui.Button):
+    def __init__(self, user_id: int, item_id: str, item: dict, quantity: int):
+        super().__init__(
+            label=f"Store {item['name'][:18]} ×{quantity}",
+            emoji=item.get("emoji", "📦"),
+            style=discord.ButtonStyle.secondary,
+        )
+        self.user_id = user_id
+        self.item_id = item_id
+
+    async def callback(self, interaction: discord.Interaction):
+        if _not_your_game(interaction, self.user_id):
+            return await interaction.response.send_message("Not your game!", ephemeral=True)
+        async with get_session() as session:
+            from game.world import deposit_to_barn, get_barn_inventory
+            success, msg = await deposit_to_barn(self.user_id, self.item_id, session)
+            player = await get_full_player(self.user_id, session)
+            barn   = await get_barn_inventory(self.user_id, session)
+        embed = barn_embed(barn, player)
+        embed.add_field(name="✅" if success else "❌", value=msg, inline=False)
+        view  = BarnView(self.user_id, barn)
+        await interaction.response.edit_message(embed=embed, view=view)
+
+
+class BarnWithdrawView(discord.ui.View):
+    def __init__(self, user_id: int, barn: dict):
+        super().__init__(timeout=180)
+        self.user_id = user_id
+        from game.data import get_item as _gi
+        for item_id, qty in list(barn.items())[:4]:
+            item = _gi(item_id)
+            if item:
+                self.add_item(BarnWithdrawItemButton(user_id, item_id, item, qty))
+        self.add_item(_BarnBackButton(user_id))
+
+
+class BarnWithdrawItemButton(discord.ui.Button):
+    def __init__(self, user_id: int, item_id: str, item: dict, quantity: int):
+        super().__init__(
+            label=f"Retrieve {item['name'][:18]} ×{quantity}",
+            emoji=item.get("emoji", "📦"),
+            style=discord.ButtonStyle.success,
+        )
+        self.user_id = user_id
+        self.item_id = item_id
+
+    async def callback(self, interaction: discord.Interaction):
+        if _not_your_game(interaction, self.user_id):
+            return await interaction.response.send_message("Not your game!", ephemeral=True)
+        async with get_session() as session:
+            from game.world import withdraw_from_barn, get_barn_inventory
+            success, msg = await withdraw_from_barn(self.user_id, self.item_id, session)
+            player = await get_full_player(self.user_id, session)
+            barn   = await get_barn_inventory(self.user_id, session)
+        embed = barn_embed(barn, player)
+        embed.add_field(name="✅" if success else "❌", value=msg, inline=False)
+        view  = BarnView(self.user_id, barn)
+        await interaction.response.edit_message(embed=embed, view=view)
+
+
+class _BarnBackButton(discord.ui.Button):
+    def __init__(self, user_id: int):
+        super().__init__(label="Back", emoji="◀️", style=discord.ButtonStyle.secondary)
+        self.user_id = user_id
+
+    async def callback(self, interaction: discord.Interaction):
+        if _not_your_game(interaction, self.user_id):
+            return await interaction.response.send_message("Not your game!", ephemeral=True)
+        async with get_session() as session:
+            from game.world import get_barn_inventory
+            player = await get_full_player(self.user_id, session)
+            barn   = await get_barn_inventory(self.user_id, session)
+        embed = barn_embed(barn, player)
+        view  = BarnView(self.user_id, barn)
+        await interaction.response.edit_message(embed=embed, view=view)
+
+
+# =============================================================================
+# FISH MARKET VIEW
+# =============================================================================
+
+class FishMarketSellButton(discord.ui.Button):
+    def __init__(self, user_id: int):
+        super().__init__(label="Sell Goods", emoji="🐟", style=discord.ButtonStyle.success)
+        self.user_id = user_id
+
+    async def callback(self, interaction: discord.Interaction):
+        if _not_your_game(interaction, self.user_id):
+            return await interaction.response.send_message("Not your game!", ephemeral=True)
+        async with get_session() as session:
+            from game.world import get_fish_market_sellable
+            player   = await get_full_player(self.user_id, session)
+            sellable = await get_fish_market_sellable(self.user_id, session)
+        embed = fish_market_embed(sellable, player)
+        view  = FishMarketView(self.user_id, sellable)
+        await interaction.response.edit_message(embed=embed, view=view)
+
+
+class FishMarketView(discord.ui.View):
+    def __init__(self, user_id: int, sellable: list):
+        super().__init__(timeout=180)
+        self.user_id = user_id
+        from game.data import get_item as _gi
+        for entry in sellable[:4]:
+            item = _gi(entry["item_id"])
+            if item:
+                self.add_item(
+                    SellFishMarketButton(
+                        user_id, entry["item_id"], item,
+                        entry["quantity"], entry["sell_price"],
+                    )
+                )
+        self.add_item(BackButton(user_id))
+
+
+class SellFishMarketButton(discord.ui.Button):
+    def __init__(self, user_id: int, item_id: str, item: dict, quantity: int, sell_price: int):
+        total = sell_price * quantity
+        super().__init__(
+            label=f"Sell {item['name'][:16]} ×{quantity} (+{total:,}Ƶ)",
+            emoji=item.get("emoji", "📦"),
+            style=discord.ButtonStyle.success,
+        )
+        self.user_id = user_id
+        self.item_id = item_id
+
+    async def callback(self, interaction: discord.Interaction):
+        if _not_your_game(interaction, self.user_id):
+            return await interaction.response.send_message("Not your game!", ephemeral=True)
+        async with get_session() as session:
+            from game.world import sell_at_fish_market, get_fish_market_sellable
+            success, msg = await sell_at_fish_market(self.user_id, self.item_id, session)
+            player   = await get_full_player(self.user_id, session)
+            sellable = await get_fish_market_sellable(self.user_id, session)
+        embed = fish_market_embed(sellable, player)
+        embed.add_field(name="✅" if success else "❌", value=msg, inline=False)
+        view  = FishMarketView(self.user_id, sellable)
+        await interaction.response.edit_message(embed=embed, view=view)
+
+
+# =============================================================================
+# ANCIENT VAULT VIEW
+# =============================================================================
+
+class OpenVaultButton(discord.ui.Button):
+    def __init__(self, user_id: int):
+        super().__init__(label="Approach the Vault", emoji="🗝️", style=discord.ButtonStyle.danger)
+        self.user_id = user_id
+
+    async def callback(self, interaction: discord.Interaction):
+        if _not_your_game(interaction, self.user_id):
+            return await interaction.response.send_message("Not your game!", ephemeral=True)
+        from core.cache import is_zone_cleared, is_vault_on_cooldown, get_vault_cooldown_seconds
+        zone_cleared = await is_zone_cleared(self.user_id, "ancient_ruins")
+        on_cooldown  = await is_vault_on_cooldown(self.user_id)
+        cd_secs      = await get_vault_cooldown_seconds(self.user_id) if on_cooldown else 0
+        embed = vault_embed(zone_cleared=zone_cleared, on_cooldown=on_cooldown, cd_secs=cd_secs)
+        view  = AncientVaultView(self.user_id, zone_cleared, on_cooldown)
+        await interaction.response.edit_message(embed=embed, view=view)
+
+
+class AncientVaultView(discord.ui.View):
+    def __init__(self, user_id: int, zone_cleared: bool, on_cooldown: bool):
+        super().__init__(timeout=180)
+        self.user_id = user_id
+        if zone_cleared and not on_cooldown:
+            self.add_item(VaultOpenButton(user_id))
+        self.add_item(BackButton(user_id))
+
+
+class VaultOpenButton(discord.ui.Button):
+    def __init__(self, user_id: int):
+        super().__init__(label="Open the Vault", emoji="✨", style=discord.ButtonStyle.success)
+        self.user_id = user_id
+
+    async def callback(self, interaction: discord.Interaction):
+        if _not_your_game(interaction, self.user_id):
+            return await interaction.response.send_message("Not your game!", ephemeral=True)
+        try:
+            await interaction.response.defer()
+        except discord.errors.NotFound:
+            return
+
+        from core.cache import is_zone_cleared, is_vault_on_cooldown, set_vault_cooldown
+        zone_cleared = await is_zone_cleared(self.user_id, "ancient_ruins")
+        on_cooldown  = await is_vault_on_cooldown(self.user_id)
+
+        if not zone_cleared or on_cooldown:
+            return await interaction.edit_original_response(
+                embed=error_embed("The vault can't be opened right now."),
+                view=BackToZoneView(self.user_id),
+            )
+
+        # Generate loot — 8% legendary, 32% epic, 60% rare
+        import random
+        rare_cards      = [cid for cid, c in CARDS.items() if c["rarity"] == "rare"]
+        epic_cards      = [cid for cid, c in CARDS.items() if c["rarity"] == "epic"]
+        legendary_cards = [cid for cid, c in CARDS.items() if c["rarity"] == "legendary"]
+
+        roll = random.random()
+        if roll < 0.08 and legendary_cards:
+            loot_card_id = random.choice(legendary_cards)
+        elif roll < 0.40 and epic_cards:
+            loot_card_id = random.choice(epic_cards)
+        elif rare_cards:
+            loot_card_id = random.choice(rare_cards)
+        else:
+            loot_card_id = None
+
+        await set_vault_cooldown(self.user_id)
+
+        async with get_session() as session:
+            if loot_card_id:
+                await add_card_to_collection(self.user_id, loot_card_id, session)
+                await add_card_to_deck(self.user_id, loot_card_id, session)
+            xp_result = await add_xp(self.user_id, 150, session)
+            xp_result["xp_gained"] = 150
+            player = await get_full_player(self.user_id, session)
+
+        card  = get_card(loot_card_id) if loot_card_id else None
+        embed = vault_opened_embed(player, card, 150, xp_result)
+        view  = BackToZoneView(self.user_id)
         await interaction.edit_original_response(embed=embed, view=view)

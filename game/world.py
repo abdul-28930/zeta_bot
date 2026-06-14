@@ -1,6 +1,7 @@
 """
 World helpers — fetch and mutate player state in the database.
 """
+import json as _json
 from datetime import datetime, timezone
 
 from sqlalchemy import delete, func, select, update
@@ -618,3 +619,201 @@ async def get_dialogue_history(user_id: int, npc_id: str, session: AsyncSession,
 
 async def save_dialogue_turn(user_id: int, npc_id: str, role: str, content: str, session: AsyncSession) -> None:
     session.add(DialogueTurn(user_id=user_id, npc_id=npc_id, role=role, content=content))
+
+
+# ---------------------------------------------------------------------------
+# Bank — deposit / withdraw
+# PlayerBank model already exists (created in create_player).
+# Deposit is free. Withdrawal costs 5% (Mercer's cut, lore-accurate).
+# ---------------------------------------------------------------------------
+
+async def get_bank_balance(user_id: int, session: AsyncSession) -> int:
+    result = await session.execute(
+        select(PlayerBank).where(PlayerBank.user_id == user_id)
+    )
+    bank = result.scalar_one_or_none()
+    return bank.zet_balance if bank else 0
+
+
+async def deposit_to_bank(user_id: int, amount: int, session: AsyncSession) -> tuple[bool, str]:
+    if amount < 10:
+        return False, "Minimum deposit is **10 Ƶ**."
+    result = await session.execute(
+        select(PlayerProgression).where(PlayerProgression.user_id == user_id)
+    )
+    prog = result.scalar_one_or_none()
+    if not prog or prog.zet_wallet < amount:
+        wallet = prog.zet_wallet if prog else 0
+        return False, f"Not enough Ƶ. Wallet: **{wallet:,} Ƶ**."
+    bank_result = await session.execute(
+        select(PlayerBank).where(PlayerBank.user_id == user_id)
+    )
+    bank = bank_result.scalar_one_or_none()
+    if not bank:
+        bank = PlayerBank(user_id=user_id, zet_balance=0)
+        session.add(bank)
+        await session.flush()
+    prog.zet_wallet  -= amount
+    bank.zet_balance += amount
+    return True, f"Deposited **{amount:,} Ƶ**. Bank balance: **{bank.zet_balance:,} Ƶ**."
+
+
+async def withdraw_from_bank(user_id: int, amount: int, session: AsyncSession) -> tuple[bool, str]:
+    if amount < 10:
+        return False, "Minimum withdrawal is **10 Ƶ**."
+    bank_result = await session.execute(
+        select(PlayerBank).where(PlayerBank.user_id == user_id)
+    )
+    bank    = bank_result.scalar_one_or_none()
+    balance = bank.zet_balance if bank else 0
+    if balance < amount:
+        return False, f"Not enough in the bank. Balance: **{balance:,} Ƶ**."
+    fee    = max(1, int(amount * 0.05))
+    payout = amount - fee
+    bank.zet_balance -= amount
+    result = await session.execute(
+        select(PlayerProgression).where(PlayerProgression.user_id == user_id)
+    )
+    prog = result.scalar_one_or_none()
+    if prog:
+        prog.zet_wallet += payout
+    return (
+        True,
+        f"Withdrew **{amount:,} Ƶ** — Mercer's fee: **{fee:,} Ƶ** (5%). "
+        f"Received: **{payout:,} Ƶ**.",
+    )
+
+
+# ---------------------------------------------------------------------------
+# Barn — item storage backed by a PlayerFlag JSON blob.
+# Stores {item_id: quantity}. Max BARN_MAX_SLOTS unique item types.
+# Blocked types: key_item, bag_upgrade, equipment, cosmetic, lore
+# ---------------------------------------------------------------------------
+
+BARN_MAX_SLOTS = 50
+_BARN_BLOCKED  = {"key_item", "bag_upgrade", "equipment", "cosmetic", "lore"}
+
+
+async def get_barn_inventory(user_id: int, session: AsyncSession) -> dict[str, int]:
+    flag = await get_flag(user_id, "barn_inventory", session)
+    if not flag:
+        return {}
+    try:
+        return _json.loads(flag)
+    except Exception:
+        return {}
+
+
+async def deposit_to_barn(user_id: int, item_id: str, session: AsyncSession) -> tuple[bool, str]:
+    from game.data import get_item
+    item = get_item(item_id)
+    if not item:
+        return False, "Unknown item."
+    if item.get("type") in _BARN_BLOCKED:
+        return False, f"**{item['name']}** can't be stored in the barn."
+
+    inv_result = await session.execute(
+        select(PlayerInventory).where(
+            PlayerInventory.user_id == user_id,
+            PlayerInventory.item_id == item_id,
+        )
+    )
+    inv_row = inv_result.scalar_one_or_none()
+    if not inv_row or inv_row.quantity <= 0:
+        return False, f"You don't have **{item['name']}** in your bag."
+
+    qty  = inv_row.quantity
+    barn = await get_barn_inventory(user_id, session)
+
+    if item_id not in barn and len(barn) >= BARN_MAX_SLOTS:
+        return False, f"Barn is full! ({len(barn)}/{BARN_MAX_SLOTS} item types)."
+
+    # Remove entire stack from bag
+    if inv_row.quantity <= qty:
+        await session.delete(inv_row)
+    else:
+        inv_row.quantity -= qty
+
+    barn[item_id] = barn.get(item_id, 0) + qty
+    await set_flag(user_id, "barn_inventory", _json.dumps(barn), session)
+    return True, f"Stored **{qty}× {item['emoji']} {item['name']}** in the barn."
+
+
+async def withdraw_from_barn(user_id: int, item_id: str, session: AsyncSession) -> tuple[bool, str]:
+    from game.data import get_item
+    item = get_item(item_id)
+    if not item:
+        return False, "Unknown item."
+
+    barn = await get_barn_inventory(user_id, session)
+    qty  = barn.get(item_id, 0)
+    if qty <= 0:
+        return False, f"**{item['name']}** isn't in the barn."
+
+    if await is_bag_full(user_id, session):
+        cap = await get_bag_capacity(user_id, session)
+        return False, f"Bag full ({cap}/{cap} slots). Make room first."
+
+    barn.pop(item_id, None)
+    await set_flag(user_id, "barn_inventory", _json.dumps(barn), session)
+    await add_item(user_id, item_id, qty, session)
+    return True, f"Retrieved **{qty}× {item['emoji']} {item['name']}** from the barn."
+
+
+# ---------------------------------------------------------------------------
+# Fish Market — sell any item that has a sell_price > 0.
+# No NPC intermediary. Direct Ƶ transfer.
+# ---------------------------------------------------------------------------
+
+async def get_fish_market_sellable(user_id: int, session: AsyncSession) -> list[dict]:
+    from game.data import get_item
+    inv = await get_inventory(user_id, session)
+    out = []
+    for entry in inv:
+        item = get_item(entry["item_id"])
+        if item and item.get("sell_price", 0) > 0:
+            out.append({
+                "item_id":    entry["item_id"],
+                "quantity":   entry["quantity"],
+                "sell_price": item["sell_price"],
+            })
+    return sorted(out, key=lambda x: x["sell_price"] * x["quantity"], reverse=True)
+
+
+async def sell_at_fish_market(
+    user_id: int, item_id: str, session: AsyncSession
+) -> tuple[bool, str]:
+    from game.data import get_item
+    item = get_item(item_id)
+    if not item or item.get("sell_price", 0) <= 0:
+        return False, "Can't sell that here."
+
+    inv_result = await session.execute(
+        select(PlayerInventory).where(
+            PlayerInventory.user_id == user_id,
+            PlayerInventory.item_id == item_id,
+        )
+    )
+    inv_row = inv_result.scalar_one_or_none()
+    if not inv_row or inv_row.quantity <= 0:
+        return False, f"You don't have any **{item['name']}**."
+
+    qty   = inv_row.quantity
+    total = item["sell_price"] * qty
+
+    inv_row.quantity -= qty
+    if inv_row.quantity <= 0:
+        await session.delete(inv_row)
+
+    prog_result = await session.execute(
+        select(PlayerProgression).where(PlayerProgression.user_id == user_id)
+    )
+    prog = prog_result.scalar_one_or_none()
+    if prog:
+        prog.zet_wallet += total
+
+    return (
+        True,
+        f"Sold **{qty}× {item['emoji']} {item['name']}** for **{total:,} Ƶ** "
+        f"({item['sell_price']:,} each).",
+    )
